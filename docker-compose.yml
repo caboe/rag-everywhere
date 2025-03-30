@@ -1,0 +1,111 @@
+# docker-compose.yml
+
+services:
+  frontend:
+    container_name: rag_frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev # Use a dev Dockerfile initially
+    ports:
+      - '5173:5173' # Default SvelteKit dev port
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # Avoid overwriting node_modules
+    networks:
+      - rag_network
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    tty: true # Keep container running for dev server
+
+  backend:
+    container_name: rag_backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile # Standard Dockerfile
+    ports:
+      - '8000:8000' # FastAPI default port
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads # Mount volume for uploads
+    networks:
+      - rag_network
+    env_file:
+      - .env
+    environment:
+      # Ensure Python outputs logs immediately
+      PYTHONUNBUFFERED: 1
+      # Add the app directory to Python's module search path
+      PYTHONPATH: /app
+    depends_on:
+      - mongo
+      - chroma
+      - ollama # Make backend wait for dependencies
+
+  mongo:
+    container_name: rag_mongo
+    image: mongo:latest
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - rag_network
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    env_file:
+      - .env
+
+  chroma:
+    container_name: rag_chroma
+    image: chromadb/chroma:latest # Use the official ChromaDB image
+    ports:
+      - '8001:8000' # Map Chroma's internal port 8000 to 8001 externally
+    volumes:
+      - chroma_data:/chroma/.chroma/index # Persist Chroma data
+    networks:
+      - rag_network
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    # Command to run ChromaDB in server mode with persistence
+    # command: uvicorn chromadb.app:app --reload --workers 1 --host 0.0.0.0 --port 8000 --log-config chromadb/log_config.yml
+
+  ollama:
+    container_name: rag_ollama
+    image: ollama/ollama:latest
+    ports:
+      - '11434:11434'
+    volumes:
+      - ollama_data:/root/.ollama # Persist downloaded models
+    networks:
+      - rag_network
+    tty: true # Keep container running
+    # Add capabilities for GPU access if needed/available
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+networks:
+  rag_network:
+    driver: bridge
+
+volumes:
+  mongo_data:
+    driver: local
+  chroma_data:
+    driver: local
+  ollama_data:
+    driver: local
+  uploads_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/uploads # Bind mount local uploads directory
+      o: bind

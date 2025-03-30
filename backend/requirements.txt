@@ -1,0 +1,13 @@
+# backend/requirements.txt
+
+fastapi>=0.110.0 # Core web framework
+uvicorn[standard]>=0.29.0 # ASGI server (includes websockets, http-tools)
+pydantic>=2.0.0 # Data validation (often bundled with FastAPI)
+motor>=3.3.0 # Async MongoDB driver
+chromadb-client>=0.4.24 # Client for ChromaDB vector store
+sentence-transformers>=2.6.0 # For generating embeddings
+pypdf>=4.0.0 # PDF text extraction
+python-docx>=1.1.0 # DOCX text extraction
+python-multipart>=0.0.7 # Required by FastAPI for form data (file uploads)
+ollama>=0.1.8 # Official Ollama Python client
+python-dotenv>=1.0.0 # For loading .env variables

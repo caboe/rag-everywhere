@@ -1,0 +1,40 @@
+{
+  "name": "frontend",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@skeletonlabs/skeleton": "^3.1.1",
+    "@skeletonlabs/skeleton-svelte": "^1.0.0",
+    "@sveltejs/adapter-auto": "^5.0.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tailwindcss/forms": "^0.5.9",
+    "@tailwindcss/postcss": "^4.0.17",
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/vite": "^4.0.17",
+    "autoprefixer": "^10.4.21",
+    "bun-types": "latest",
+    "postcss": "^8.5.3",
+    "postcss-import": "^16.1.0",
+    "tailwindcss": "^4.0.17",
+    "tslib": "^2.8.1",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.3",
+    "vite-plugin-tailwind-purgecss": "^0.3.5"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@sveltejs/kit": "^2.20.2",
+    "svelte": "^5.25.3"
+  }
+}

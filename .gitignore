@@ -1,0 +1,60 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node / Bun
+node_modules/
+.npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun.lockb
+
+# SvelteKit
+.svelte-kit/
+build/
+dist/
+
+# Frontend dependencies (if not using a package manager lockfile)
+# Adjust if your frontend dependencies are managed differently
+# /frontend/node_modules/ # Covered by node_modules/ above
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Docker
+docker-compose.override.yml
+
+# Uploads / Data (Ensure these are intended to be ignored)
+/backend/uploads/
+/data/uploads/
+# If data directory itself should be ignored (excluding uploads)
+# /data/*
+# !/data/uploads/
+
+# Operating System files
+Thumbs.db
+ehthumbs.db

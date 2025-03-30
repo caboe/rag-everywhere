@@ -1,0 +1,32 @@
+# frontend/Dockerfile.dev
+
+# Use an official Node image as a base
+# Choose a version compatible with SvelteKit and bun
+FROM node:20-slim
+
+# Install bun globally
+# We use npm here just to install bun itself easily
+RUN npm install -g bun
+
+# Set the working directory
+WORKDIR /app
+
+# Copy package.json and bun.lockb (if it exists)
+# This allows caching the dependency installation layer
+COPY package.json bun.lockb* ./
+
+# Install dependencies using bun
+# Use --frozen-lockfile in CI/production builds for reproducibility
+# For dev, a simple install is usually fine
+RUN bun install
+
+# Copy the rest of the application code
+# This is done after bun install to leverage Docker cache
+COPY . .
+
+# Expose the SvelteKit default development port
+EXPOSE 5173
+
+# Command to run the SvelteKit development server
+# Use --host to make it accessible outside the container
+CMD ["bun", "run", "dev", "--host"]
