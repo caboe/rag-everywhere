@@ -199,14 +199,34 @@ async def perform_rag(
                 # Alternative: Use 'where_document' if filtering by full document content is needed/possible
                 # where_document={"$contains": "some_keyword"} # Example
             )
+            # Debugging code removed.
 
-            # Extract the text content of the retrieved chunks
+            # Extract documents and metadata from results
+            formatted_sources = []
+            context_chunks = []
             if results and results.get('documents') and results['documents'][0]:
-                 context_chunks = results['documents'][0]
-                 logger.info(f"Retrieved {len(context_chunks)} context chunks from ChromaDB.")
-                 logger.debug(f"Context chunks: {context_chunks}")
+                docs = results['documents'][0]
+                metadatas = results.get('metadatas', [[]])[0] # Get metadatas, default to empty list if not present
+                distances = results.get('distances', [[]])[0] # Get distances, default to empty list if not present
+                ids = results.get('ids', [[]])[0] # Get ids, default to empty list if not present
+
+                context_chunks = docs # Keep the list of document strings for the prompt context
+                logger.info(f"Retrieved {len(context_chunks)} context chunks from ChromaDB.")
+                logger.debug(f"Context chunks: {context_chunks}")
+
+                # Format sources as List[Dict] for the output model
+                for i, doc in enumerate(docs):
+                    source_dict = {
+                        "content": doc,
+                        "metadata": metadatas[i] if i < len(metadatas) else {},
+                        "distance": distances[i] if i < len(distances) else None,
+                        "id": ids[i] if i < len(ids) else None
+                    }
+                    formatted_sources.append(source_dict)
+                logger.debug(f"Formatted sources: {formatted_sources}")
+
             else:
-                 logger.warning("ChromaDB query returned no relevant chunks for the selected documents.")
+                logger.warning("ChromaDB query returned no relevant chunks for the selected documents.")
 
         except Exception as e:
             logger.error(f"Failed to query ChromaDB: {e}", exc_info=True)
@@ -241,10 +261,10 @@ Answer:"""
 
     # 6. Format and return
     show_sources = os.getenv("SHOW_SOURCES", "false").lower() == "true"
-    # Corrected model name below
+    # Use formatted_sources (List[Dict]) for the output model
     output = InternalChatMessageOutput(
         response=llm_response_content,
-        sources=context_chunks if show_sources else None # Include sources if flag is set
+        sources=formatted_sources if show_sources else None # Use formatted list of dicts
     )
     return output
 # CORRECTED INDENTATION ENDS HERE
