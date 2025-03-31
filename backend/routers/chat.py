@@ -5,11 +5,14 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel
 from typing import List, Optional
 import motor.motor_asyncio # Add motor import for type hint
+from sentence_transformers import SentenceTransformer # Add for type hint
+import chromadb # Add for type hint
+import ollama # Add for type hint
 
 # Assuming main.py initializes these and they are accessible
 # In a real app, you might use dependency injection more formally
 # Remove db, keep others for now (will refactor later if needed)
-from main import chroma_client, embedding_model, ollama_client, logger, get_db
+from main import logger, get_db, get_embedding_model, get_chroma_client, get_ollama_client # Import get_ollama_client, remove ollama_client
 
 router = APIRouter()
 
@@ -56,7 +59,10 @@ class OpenAIChatCompletionOutput(BaseModel):
 
 async def perform_rag(
     query: str,
-    db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db) # Inject DB
+    db: motor.motor_asyncio.AsyncIOMotorDatabase, # Accept resolved DB
+    embedding_model: SentenceTransformer,         # Accept resolved model
+    chroma_client: chromadb.HttpClient,           # Accept resolved Chroma client
+    ollama_client: ollama.AsyncClient             # Accept resolved Ollama client
 ) -> InternalChatMessageOutput:
     """
     Placeholder for the actual RAG logic.
@@ -68,6 +74,8 @@ async def perform_rag(
     6. Format and return response.
     """
     logger.info(f"Received chat query: '{query}'")
+
+    query_embedding = None # Initialize query_embedding before try block
 
     # --- Implement RAG Steps ---
     # 1. Get selected docs from MongoDB, considering tree structure
@@ -129,7 +137,8 @@ async def perform_rag(
         if not selected_doc_ids:
             logger.warning("No documents are effectively selected for RAG after tree traversal.")
             # Return a specific message instead of proceeding with empty context
-            return ChatMessageOutput(response="No documents are currently selected for chat. Please select documents or folders in the Upload section.", sources=[])
+            # Corrected model name below
+            return InternalChatMessageOutput(response="No documents are currently selected for chat. Please select documents or folders in the Upload section.", sources=[])
             # raise HTTPException(status_code=400, detail="No documents selected for chat.") # Alternative
 
         logger.info(f"Final list of {len(selected_doc_ids)} document IDs selected for RAG (including descendants): {selected_doc_ids}")
@@ -138,20 +147,28 @@ async def perform_rag(
         logger.error(f"Failed to determine selected documents from MongoDB tree: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve document selection status")
 
-    # 2. Embed query (Requires embedding_model)
-    if not embedding_model:
-        raise HTTPException(status_code=503, detail="Embedding model not loaded")
+    # CORRECTED INDENTATION STARTS HERE
+    # 2. Embed query (using injected embedding_model)
+    logger.debug(f"Attempting to use embedding_model: {embedding_model} (type: {type(embedding_model)})") # Log the model object itself
     try:
-        query_embedding = embedding_model.encode(query).tolist()
-        logger.debug("Query embedding generated.")
+        # Use the injected embedding_model directly
+        raw_embedding = embedding_model.encode(query)
+        logger.debug(f"Raw embedding type: {type(raw_embedding)}, shape/size: {getattr(raw_embedding, 'shape', 'N/A')}") # Log intermediate result
+        query_embedding = raw_embedding.tolist()
+        logger.debug(f"Query embedding generated (type: {type(query_embedding)}, is None: {query_embedding is None}).") # Log after assignment
     except Exception as e:
-        logger.error(f"Failed to generate query embedding: {e}")
+        logger.error("!!! Exception occurred during embedding generation !!!") # Log generic message first
+        logger.error(f"Failed to generate query embedding: {e}", exc_info=True) # Log exception with traceback
         raise HTTPException(status_code=500, detail="Failed to generate query embedding")
 
-    # 3. Query ChromaDB (Requires chroma_client)
+    # Ensure embedding was generated before proceeding
+    if query_embedding is None:
+        logger.error("Query embedding is None after generation attempt.")
+        raise HTTPException(status_code=500, detail="Failed to generate query embedding (result was None)")
+
+    # 3. Query ChromaDB (using injected chroma_client)
     context_chunks = [] # Initialize empty list for context
-    if not chroma_client:
-        raise HTTPException(status_code=503, detail="ChromaDB client not connected")
+    # Removed check for chroma_client, as it's handled by dependency injection
     if not selected_doc_ids:
         logger.warning("Skipping ChromaDB query as no documents are selected for RAG.")
     else:
@@ -168,7 +185,7 @@ async def perform_rag(
 
             # Ensure collection exists
             try:
-                 collection = chroma_client.get_collection(collection_name)
+                 collection = chroma_client.get_collection(collection_name) # Use correct parameter name
             except Exception as e_coll:
                  logger.error(f"Failed to get ChromaDB collection '{collection_name}': {e_coll}. Make sure it's created during document upload.")
                  # Depending on requirements, could try get_or_create_collection, but it's better if upload creates it.
@@ -196,9 +213,7 @@ async def perform_rag(
             raise HTTPException(status_code=500, detail="Failed to query vector database")
 
     # 4. Format Prompt
-        raise HTTPException(status_code=500, detail="Failed to query vector database")
-
-    # 4. Format Prompt
+    # Removed stray raise HTTPException from previous version
     context_str = "\n".join(context_chunks)
     prompt = f"""Based on the following context, answer the user's question.
 Context:
@@ -209,9 +224,8 @@ User Question: {query}
 Answer:"""
     logger.debug(f"Generated prompt for LLM:\n{prompt}")
 
-    # 5. Call Ollama LLM (Requires ollama_client)
-    if not ollama_client:
-        raise HTTPException(status_code=503, detail="Ollama client not connected")
+    # 5. Call Ollama LLM (using injected ollama_client)
+    # Removed check for ollama_client, as it's handled by dependency injection
     try:
         llm_model_name = os.getenv("LLM_MODEL_NAME", "gemma:2b") # Get model from env
         logger.info(f"Sending prompt to Ollama model: {llm_model_name}")
@@ -227,26 +241,37 @@ Answer:"""
 
     # 6. Format and return
     show_sources = os.getenv("SHOW_SOURCES", "false").lower() == "true"
-    output = ChatMessageOutput(
+    # Corrected model name below
+    output = InternalChatMessageOutput(
         response=llm_response_content,
         sources=context_chunks if show_sources else None # Include sources if flag is set
     )
     return output
+# CORRECTED INDENTATION ENDS HERE
 
 # --- API Endpoint ---
 
 # Internal API endpoint used by the SvelteKit frontend
-@router.post("/", response_model=InternalChatMessageOutput)
+@router.post("", response_model=InternalChatMessageOutput) # Removed trailing slash from path
 async def handle_internal_chat_message(
     chat_input: InternalChatMessageInput = Body(...),
-    db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db) # Inject DB
+    db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db), # Inject DB
+    embedding_model: SentenceTransformer = Depends(get_embedding_model), # Inject Model
+    chroma_client: chromadb.HttpClient = Depends(get_chroma_client), # Inject Chroma
+    ollama_client: ollama.AsyncClient = Depends(get_ollama_client) # Inject Ollama
 ):
     """
     Handles incoming chat messages, performs RAG, and returns the LLM response.
     """
     try:
-        # Call the RAG function, passing the injected db
-        rag_result: InternalChatMessageOutput = await perform_rag(chat_input.message, db=db)
+        # Call the RAG function, passing the resolved dependencies
+        rag_result: InternalChatMessageOutput = await perform_rag(
+            query=chat_input.message,
+            db=db,
+            embedding_model=embedding_model,
+            chroma_client=chroma_client,
+            ollama_client=ollama_client # Pass the injected client
+        )
         return rag_result
     except HTTPException as http_exc:
         # Re-raise HTTPExceptions (like 503 Service Unavailable)
@@ -259,7 +284,10 @@ async def handle_internal_chat_message(
 @router.post("/v1/chat/completions", response_model=OpenAIChatCompletionOutput, tags=["OpenAI"])
 async def handle_openai_chat_completion(
     request_body: OpenAIChatCompletionInput = Body(...),
-    db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db) # Inject DB
+    db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db), # Inject DB
+    embedding_model: SentenceTransformer = Depends(get_embedding_model), # Inject Model
+    chroma_client: chromadb.HttpClient = Depends(get_chroma_client), # Inject Chroma
+    ollama_client: ollama.AsyncClient = Depends(get_ollama_client) # Inject Ollama
 ):
     """
     Handles chat completion requests compatible with the OpenAI API spec.
@@ -276,8 +304,14 @@ async def handle_openai_chat_completion(
         raise HTTPException(status_code=501, detail="Streaming responses are not implemented yet.")
 
     try:
-        # Reuse the core RAG logic, passing the injected db
-        rag_result: InternalChatMessageOutput = await perform_rag(user_message, db=db)
+        # Reuse the core RAG logic, passing the resolved dependencies
+        rag_result: InternalChatMessageOutput = await perform_rag(
+            query=user_message,
+            db=db,
+            embedding_model=embedding_model,
+            chroma_client=chroma_client,
+            ollama_client=ollama_client
+        )
 
         # Format the response according to OpenAI spec
         import time

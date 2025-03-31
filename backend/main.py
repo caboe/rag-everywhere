@@ -17,7 +17,7 @@ load_dotenv()
 # Configure logging
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=log_level,
+    level=log_level, # Use level from environment variable
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -156,19 +156,29 @@ async def get_db() -> Union[motor.motor_asyncio.AsyncIOMotorDatabase, None]:
         return None
     return db
 
-async def get_embedding_model() -> Union[SentenceTransformer, None]:
+async def get_embedding_model() -> SentenceTransformer: # Ensure model is returned or exception raised
     """Dependency function to get the SentenceTransformer model instance."""
     if embedding_model is None:
         logger.error("Embedding model instance is not available.")
-        return None
+        # Raise 503 if the model isn't loaded when the dependency is requested
+        raise HTTPException(status_code=503, detail="Embedding model not loaded")
     return embedding_model
 
-async def get_chroma_client() -> Union[chromadb.HttpClient, None]:
+async def get_chroma_client() -> chromadb.HttpClient: # Ensure client is returned or exception raised
     """Dependency function to get the ChromaDB client instance."""
     if chroma_client is None:
         logger.error("ChromaDB client instance is not available.")
-        return None
+        # Raise 503 if the client isn't available when the dependency is requested
+        raise HTTPException(status_code=503, detail="ChromaDB client not connected")
     return chroma_client
+
+async def get_ollama_client() -> ollama.AsyncClient: # Ensure client is returned or exception raised
+    """Dependency function to get the Ollama client instance."""
+    if ollama_client is None:
+        logger.error("Ollama client instance is not available.")
+        # Raise 503 if the client isn't available when the dependency is requested
+        raise HTTPException(status_code=503, detail="Ollama client not connected")
+    return ollama_client
 
 # --- API Endpoints ---
 
