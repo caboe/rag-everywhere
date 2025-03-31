@@ -29,7 +29,9 @@ class DocumentMetadata(BaseModel):
     parent_id: Optional[str] = None # ID of the parent folder in the tree (or None for root)
     is_folder: bool = Field(default=False)
     selected_for_rag: bool = Field(default=True) # Default to selected when uploaded? Or False? Let's start with True.
-    # Add other fields as needed, e.g., size, owner, processing_status
+    processing_status: str = Field(default="queued") # e.g., queued, processing, completed, failed, unsupported
+    updated_at: datetime = Field(default_factory=datetime.utcnow) # Add updated timestamp
+    # Add other fields as needed, e.g., size, owner
 
     class Config:
         populate_by_name = True
