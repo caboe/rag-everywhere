@@ -11,3 +11,4 @@ python-docx>=1.1.0 # DOCX text extraction
 python-multipart>=0.0.7 # Required by FastAPI for form data (file uploads)
 ollama>=0.1.8 # Official Ollama Python client
 python-dotenv>=1.0.0 # For loading .env variables
+langchain-text-splitters>=0.0.1 # For better text chunking

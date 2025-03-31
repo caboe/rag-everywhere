@@ -9,12 +9,12 @@
 		"resolveJsonModule": true,
 		"skipLibCheck": true,
 		"sourceMap": true,
-		"strict": true
+		"strict": true,
 		// Add path aliases if needed later
-		// "paths": {
-		//     "$lib": ["./src/lib"],
-		//     "$lib/*": ["./src/lib/*"]
-		// }
+		"paths": {
+			"$lib": ["./src/lib"],
+			"$lib/*": ["./src/lib/*"]
+		}
 	}
 	// Add excludes if needed
 	// "exclude": ["node_modules/**", "./node_modules", "./node_modules/*", ".svelte-kit/**"]

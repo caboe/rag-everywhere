@@ -1,16 +1,22 @@
 # backend/routers/documents.py
 import os
 import shutil
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, BackgroundTasks
 from typing import List, Optional
 import logging
 from pathlib import Path
 import pypdf
 import docx # python-docx
+from pydantic import BaseModel
+from langchain_text_splitters import RecursiveCharacterTextSplitter # Import the splitter
+import motor.motor_asyncio # Add motor import for type hint
+import chromadb # Add chromadb import for type hint
+from sentence_transformers import SentenceTransformer # Add SentenceTransformer import for type hint
 
 # Assuming main.py defines db, chroma_client, embedding_model
 # We need to import them or use dependency injection
-from main import db, chroma_client, embedding_model, logger # Direct import from main
+# Import only logger and dependency functions from main
+from main import logger, get_db, get_embedding_model, get_chroma_client
 from models.mongo_models import DocumentMetadata # Direct import from models
 
 router = APIRouter()
@@ -22,7 +28,11 @@ UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
 # --- Helper Functions (Placeholder - will be expanded) ---
 
-async def process_document_chunks(doc_metadata: DocumentMetadata):
+async def process_document_chunks(
+    doc_metadata: DocumentMetadata,
+    embedding_model: SentenceTransformer, # Pass embedding model explicitly
+    chroma_client: chromadb.HttpClient # Pass chroma client explicitly
+):
     """Extracts text, chunks, creates embeddings, and stores them in ChromaDB."""
     logger.info(f"Processing document {doc_metadata.filename} (ID: {doc_metadata.id})")
     extracted_text = ""
@@ -59,32 +69,34 @@ async def process_document_chunks(doc_metadata: DocumentMetadata):
 
         logger.info(f"Successfully extracted text from {doc_metadata.filename} (Length: {len(extracted_text)})")
 
-        # 2. Chunk text (Placeholder - using simple splitting for now)
-        # TODO: Implement more sophisticated chunking (e.g., RecursiveCharacterTextSplitter)
-        chunk_size = 1000 # Example size
-        overlap = 100    # Example overlap
-        chunks = [extracted_text[i:i + chunk_size] for i in range(0, len(extracted_text), chunk_size - overlap)]
-        logger.info(f"Split text into {len(chunks)} chunks.")
+        # 2. Chunk text using RecursiveCharacterTextSplitter
+        chunk_size = int(os.getenv("CHUNK_SIZE", "1000"))
+        chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "150"))
+
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            is_separator_regex=False,
+            separators=["\n\n", "\n", " ", ""] # Common separators
+        )
+
+        chunks = text_splitter.split_text(extracted_text)
+        logger.info(f"Split text into {len(chunks)} chunks using RecursiveCharacterTextSplitter.")
 
         if not chunks:
             logger.warning(f"Text splitting resulted in zero chunks for {doc_metadata.filename}")
             return
 
         # 3. Generate embeddings
-        if not embedding_model:
-             logger.error("Embedding model not loaded. Cannot generate embeddings.")
-             # TODO: Update status in MongoDB?
-             return
+        # No need to check embedding_model here, it's guaranteed by the caller (upload_documents)
 
         logger.info(f"Generating embeddings for {len(chunks)} chunks...")
         embeddings = embedding_model.encode(chunks, show_progress_bar=False) # Disable progress bar for logs
         logger.info(f"Generated {len(embeddings)} embeddings.")
 
         # 4. Store in ChromaDB
-        if not chroma_client:
-            logger.error("ChromaDB client not available. Cannot store embeddings.")
-            # TODO: Update status in MongoDB?
-            return
+        # No need to check chroma_client here, it's guaranteed by the caller (upload_documents)
 
         try:
             collection = chroma_client.get_or_create_collection("rag_vectors") # Use a consistent collection name
@@ -117,20 +129,28 @@ async def process_document_chunks(doc_metadata: DocumentMetadata):
 
 # --- API Endpoints ---
 
-@router.post("/upload", status_code=201)
+@router.post("/upload", status_code=202) # Changed to 202 Accepted for background task
 async def upload_documents(
+    background_tasks: BackgroundTasks, # Inject BackgroundTasks
     files: List[UploadFile] = File(...),
-    parent_id: Optional[str] = Form(None) # Get parent_id from form data
-    # Add dependency injection for DB etc. if not using globals from main
-    # db: AsyncIOMotorDatabase = Depends(get_database)
+    parent_id: Optional[str] = Form(None), # Get parent_id from form data
+    db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db), # Inject DB
+    embedding_model: SentenceTransformer = Depends(get_embedding_model), # Inject Embedding Model
+    chroma_client: chromadb.HttpClient = Depends(get_chroma_client) # Inject Chroma Client
 ):
     """
     Handles uploading one or more files.
     Stores the original file, creates metadata in MongoDB,
     and triggers background processing for chunking/embedding.
     """
-    if not db:
+    if db is None:
         raise HTTPException(status_code=503, detail="MongoDB connection not available.")
+    # Also check injected dependencies needed for background task
+    if embedding_model is None:
+        raise HTTPException(status_code=503, detail="Embedding model not available.")
+    if chroma_client is None:
+        raise HTTPException(status_code=503, detail="ChromaDB client not available.")
+
 
     uploaded_doc_ids = []
     for file in files:
@@ -165,14 +185,21 @@ async def upload_documents(
             uploaded_doc_ids.append(doc_id)
             logger.info(f"Successfully saved file {safe_filename} and created metadata (ID: {doc_id})")
 
-            # TODO: Trigger background task for processing (chunking, embedding)
-            # For now, call it directly (will block the request)
-            # In production, use BackgroundTasks or a task queue (Celery, RQ)
+            # Add processing task to background
             doc_metadata.id = insert_result.inserted_id # Add the ID back for processing func
-            await process_document_chunks(doc_metadata)
+            logger.info(f"Adding background task for processing document ID: {doc_id}")
+            # Pass the injected dependencies to the background task
+            background_tasks.add_task(
+                process_document_chunks,
+                doc_metadata=doc_metadata,
+                embedding_model=embedding_model,
+                chroma_client=chroma_client
+            )
+            # Note: process_document_chunks is now an async function added to the background,
+            # FastAPI handles awaiting it after the response is sent.
 
         except Exception as e:
-            logger.error(f"Failed to process file {file.filename}: {e}", exc_info=True)
+            logger.error(f"Failed to save file or create metadata for {file.filename}: {e}", exc_info=True)
             # Optional: Clean up saved file if metadata creation failed?
             # if 'save_path' in locals() and save_path.exists():
             #     save_path.unlink()
@@ -182,6 +209,81 @@ async def upload_documents(
     if not uploaded_doc_ids:
          raise HTTPException(status_code=400, detail="No files were successfully processed.")
 
-    return {"message": f"Successfully uploaded {len(uploaded_doc_ids)} file(s).", "document_ids": uploaded_doc_ids}
+    # Return 202 Accepted status code as processing happens in the background
+    return {"message": f"Upload accepted for {len(uploaded_doc_ids)} file(s). Processing started.", "document_ids": uploaded_doc_ids}
 
-# TODO: Add endpoints for /documents/tree, /documents/select etc.
+
+@router.get("/tree", response_model=List[DocumentMetadata])
+async def get_document_tree(db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db)): # Inject DB
+    """
+    Retrieves the entire document/folder structure from MongoDB.
+    The frontend will be responsible for constructing the tree view from this flat list.
+    """
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB connection not available.")
+
+    try:
+        documents_cursor = db["documents"].find({})
+        # Use DocumentMetadata for validation and serialization
+        documents = [DocumentMetadata(**doc) async for doc in documents_cursor]
+        logger.info(f"Retrieved {len(documents)} items for the document tree.")
+        return documents
+    except Exception as e:
+        logger.error(f"Failed to retrieve document tree from MongoDB: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve document tree.")
+
+
+class SelectInput(BaseModel):
+    document_id: str
+    selected: bool
+    # Optional: Add recursive flag later if needed for folders
+    # recursive: bool = False
+
+@router.put("/select", status_code=200)
+async def select_document_for_rag(select_input: SelectInput, db: motor.motor_asyncio.AsyncIOMotorDatabase = Depends(get_db)): # Inject DB
+    """
+    Updates the RAG selection status for a specific document/folder.
+    """
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB connection not available.")
+
+    doc_id = select_input.document_id
+    selected_status = select_input.selected
+
+    try:
+        # Convert string ID back to ObjectId for MongoDB query
+        from bson import ObjectId
+        try:
+            object_id = ObjectId(doc_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid document_id format: {doc_id}")
+
+        # TODO: Implement recursive update later if needed for folders
+        # if select_input.recursive: ...
+
+        logger.info(f"Updating RAG selection status for document {doc_id} to {selected_status}")
+        update_result = await db["documents"].update_one(
+            {"_id": object_id},
+            {"$set": {"selected_for_rag": selected_status}}
+        )
+
+        if update_result.matched_count == 0:
+            raise HTTPException(status_code=404, detail=f"Document not found with ID: {doc_id}")
+
+        if update_result.modified_count == 0 and update_result.matched_count == 1:
+             # This means the status was already set to the desired value
+             logger.info(f"Document {doc_id} RAG selection status was already {selected_status}.")
+             # Return 200 OK, but indicate no change occurred if needed by frontend
+             return {"message": f"Document {doc_id} status already set to {selected_status}."}
+
+        logger.info(f"Successfully updated RAG selection status for document {doc_id}.")
+        return {"message": f"Successfully updated document {doc_id} selection status to {selected_status}."}
+
+    except HTTPException as http_exc:
+         raise http_exc # Re-raise specific HTTP exceptions
+    except Exception as e:
+        logger.error(f"Failed to update document selection status for {doc_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update document selection status.")
+
+
+# TODO: Add more endpoints if needed

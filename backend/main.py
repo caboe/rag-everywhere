@@ -9,6 +9,7 @@ from sentence_transformers import SentenceTransformer
 import ollama
 from contextlib import asynccontextmanager
 from typing import Union
+from fastapi.middleware.cors import CORSMiddleware # Import CORS middleware
 
 # Load environment variables
 load_dotenv()
@@ -127,6 +128,48 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# --- CORS Middleware ---
+# Define allowed origins (adjust as needed for production)
+origins = [
+    "http://localhost:5173", # SvelteKit dev server
+    # Add other origins if needed (e.g., your production frontend URL)
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True, # Allows cookies to be included in requests
+    allow_methods=["*"],    # Allows all methods (GET, POST, PUT, etc.)
+    allow_headers=["*"],    # Allows all headers
+)
+
+# --- Dependency Functions ---
+async def get_db() -> Union[motor.motor_asyncio.AsyncIOMotorDatabase, None]:
+    """Dependency function to get the MongoDB database instance."""
+    if db is None:
+        # This ideally shouldn't happen if lifespan completes successfully,
+        # but provides a safeguard.
+        logger.error("MongoDB database instance is not available.")
+        # Option 1: Raise an internal server error
+        # raise HTTPException(status_code=500, detail="Database connection not initialized.")
+        # Option 2: Return None and let the endpoint handle it (as it currently does)
+        return None
+    return db
+
+async def get_embedding_model() -> Union[SentenceTransformer, None]:
+    """Dependency function to get the SentenceTransformer model instance."""
+    if embedding_model is None:
+        logger.error("Embedding model instance is not available.")
+        return None
+    return embedding_model
+
+async def get_chroma_client() -> Union[chromadb.HttpClient, None]:
+    """Dependency function to get the ChromaDB client instance."""
+    if chroma_client is None:
+        logger.error("ChromaDB client instance is not available.")
+        return None
+    return chroma_client
+
 # --- API Endpoints ---
 
 @app.get("/api/health", tags=["Health"])
@@ -152,12 +195,12 @@ async def health_check():
         raise HTTPException(status_code=503, detail=status)
 
 # --- API Routers ---
-from routers import documents # Import directly from routers subdir
-# TODO: Import chat router later
+from routers import documents, chat, dashboard # Import directly from routers subdir
+
 
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
-# TODO: Include chat router later
-# app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"]) # Add dashboard router
 
 # Add a root endpoint for basic verification
 @app.get("/", tags=["Root"])
