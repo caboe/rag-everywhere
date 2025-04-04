@@ -50,6 +50,8 @@ docker-compose.override.yml
 
 # Uploads / Data (Ensure these are intended to be ignored)
 /backend/uploads/
+/backend/.cache/
+
 /data/uploads/
 # If data directory itself should be ignored (excluding uploads)
 # /data/*

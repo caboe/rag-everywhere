@@ -66,13 +66,14 @@ async def lifespan(app: FastAPI):
         # For now, we assume connection if no exception during init
         # chroma_client.heartbeat() # Example if available
         logger.info("Successfully initialized ChromaDB client.")
-        # TODO: Create collection if it doesn't exist?
-        # try:
-        #     collection = chroma_client.get_or_create_collection("rag_vectors")
-        #     logger.info(f"ChromaDB collection 'rag_vectors' ready.")
-        # except Exception as e_coll:
-        #     logger.error(f"Failed to get/create ChromaDB collection: {e_coll}")
-
+        # Ensure the collection exists
+        try:
+            collection_name = "rag_vectors"
+            collection = chroma_client.get_or_create_collection(collection_name)
+            logger.info(f"ChromaDB collection '{collection_name}' ready.")
+        except Exception as e_coll:
+            logger.error(f"Failed to get/create ChromaDB collection: {e_coll}")
+            # Depending on requirements, you might want to prevent startup if collection fails
     except Exception as e:
         logger.error(f"Failed to connect to ChromaDB: {e}")
         chroma_client = None
@@ -81,10 +82,10 @@ async def lifespan(app: FastAPI):
     embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "paraphrase-multilingual-MiniLM-L12-v2")
     try:
         logger.info(f"Loading embedding model: {embedding_model_name}...")
-        # Specify cache folder if needed, e.g., inside a persistent volume
-        # cache_dir = "/app/models_cache"
-        # os.makedirs(cache_dir, exist_ok=True)
-        embedding_model = SentenceTransformer(embedding_model_name) # add cache_folder=cache_dir if needed
+        # Specify cache folder within the app directory
+        cache_dir = "/app/.cache/sentence_transformers"
+        os.makedirs(cache_dir, exist_ok=True)
+        embedding_model = SentenceTransformer(embedding_model_name, cache_folder=cache_dir)
         logger.info("Successfully loaded embedding model.")
     except Exception as e:
         logger.error(f"Failed to load embedding model: {e}")
